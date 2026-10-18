@@ -1,0 +1,4 @@
+^\.cloudtargets$
+^_cloudtargets\.yml$
+^LICENSE\.md$
+^examples$

@@ -9,6 +9,7 @@ Description: Provision an ephemeral machine from a cloud provider (initially
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-Imports: httr2, processx, yaml, cli
-Suggests: targets, crew, testthat (>= 3.0.0)
+Imports: cli, crew, httr2, jsonlite, processx, R6, stats, utils, yaml
+Suggests: targets, testthat (>= 3.0.0), withr
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0

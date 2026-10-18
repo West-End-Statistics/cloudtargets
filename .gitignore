@@ -6,3 +6,5 @@ _cloudtargets/
 .machine_state*
 _targets/
 *.Rcheck
+.cloudtargets/
+_cloudtargets.yml
