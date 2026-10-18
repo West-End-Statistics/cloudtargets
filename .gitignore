@@ -8,3 +8,4 @@ _targets/
 *.Rcheck
 .cloudtargets/
 _cloudtargets.yml
+!examples/**/_cloudtargets.yml

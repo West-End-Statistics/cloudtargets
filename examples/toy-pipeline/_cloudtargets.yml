@@ -1,0 +1,9 @@
+# Machines are created from a public image that already has R and targets.
+image: westendstatistics/rstats-dev:r4.5.3-20261011
+ssh_user: vscode
+name_prefix: cloudtargets-toy   # machines are named with this prefix
+max_hours: 1          # each machine deletes itself after this long, as a backstop
+runpod:
+  flavors: [cpu3c]
+  vcpus: [2]          # smallest machines; real runs would list larger sizes first
+  min_vcpus: 2
