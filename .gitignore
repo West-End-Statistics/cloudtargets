@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Rcheck/
+_cloudtargets/
+.machine_state*
+_targets/
+*.Rcheck

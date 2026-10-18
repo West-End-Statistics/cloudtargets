@@ -1,0 +1,14 @@
+Package: cloudtargets
+Title: Run Long 'targets' Pipelines on On-Demand Cloud Machines
+Version: 0.0.0.9000
+Authors@R: person("Vitaly", "Druker", email = "vitaly@westendstats.com", role = c("aut", "cre"))
+Description: Provision an ephemeral machine from a cloud provider (initially
+    'RunPod'), run a 'targets' pipeline on it detached, monitor progress,
+    fetch results, and tear the machine down, with time-to-live and idle
+    guardrails against runaway cost.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports: httr2, processx, yaml, cli
+Suggests: targets, crew, testthat (>= 3.0.0)
+Config/testthat/edition: 3
