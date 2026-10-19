@@ -153,3 +153,31 @@ test_that("the pod start script lifts sshd's 10-sessions-per-connection limit be
   sshd_at <- regexpr("exec ${sudo_cmd} /usr/sbin/sshd", script, fixed = TRUE)
   expect_lt(limit_at, sshd_at)
 })
+
+test_that("the pod start script ends the pod through GraphQL podTerminate, never by exiting the container", {
+  script <- paste(readLines(system.file("pod-start.sh", package = "cloudtargets")), collapse = "\n")
+  expect_match(script, "https://api.runpod.io/graphql", fixed = TRUE)
+  expect_match(script, "podTerminate", fixed = TRUE)
+  # The injected key is refused by the REST API (403): it must not be used there.
+  expect_false(grepl("rest.runpod.io", script, fixed = TRUE))
+  # The key stays in the environment, never expanded onto a command line.
+  expect_false(grepl("Bearer ${RUNPOD_API_KEY}", script, fixed = TRUE))
+  expect_false(grepl("-H \"Authorization", script, fixed = TRUE)) # not passed as an argument to curl
+  expect_match(script, "curl -s -m 30 -K -", fixed = TRUE) # the header is read from stdin
+  # RunPod restarts a container whose main process exits, so sshd must not be wrapped in a timeout.
+  expect_false(grepl("timeout \"", script, fixed = TRUE))
+  expect_match(script, "/var/log/cloudtargets-start.log", fixed = TRUE)
+  expect_match(script, "retries every minute|retried each minute", perl = TRUE)
+})
+
+test_that("the time-limit logic runs correctly in a plain shell (limit parsing and guard)", {
+  skip_on_os("windows")
+  script <- readLines(system.file("pod-start.sh", package = "cloudtargets"))
+  from <- grep("^secs=\"\"", script)
+  to <- grep("^log=", script) - 1L
+  snippet <- paste(c(script[from:to], 'printf "%s" "$secs"'), collapse = "\n")
+  run <- function(hours) system2("env", c(if (!is.null(hours)) paste0("CT_MAX_HOURS=", hours), "sh", "-c", shQuote(snippet)), stdout = TRUE)
+  expect_equal(run("0.1"), "360")
+  expect_equal(run("12"), "43200")
+  expect_length(run(NULL), 0L)
+})

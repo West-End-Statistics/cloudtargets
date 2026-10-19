@@ -34,11 +34,39 @@ export -p \
 # connections when many workers start at once.
 printf 'MaxSessions 512\nMaxStartups 100:30:300\n' | ${sudo_cmd} tee /etc/ssh/sshd_config.d/10-cloudtargets.conf >/dev/null
 
-# Time limit: delete this pod after CT_MAX_HOURS even if the controlling session
-# is gone. RunPod injects RUNPOD_POD_ID and an API key into every pod.
-if [ -n "${CT_MAX_HOURS:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" ]; then
+# Time limit (CT_MAX_HOURS): the machine must not outlive its controller. After the limit the
+# pod terminates ITSELF through RunPod's GraphQL API, using the key RunPod injects into every pod
+# (that key is refused by the REST API, 403, but accepted for GraphQL podTerminate). It retries
+# every minute in case a call fails. Ending the container instead would not work: RunPod
+# restarts a container whose main process exits.
+# What was set up, and every attempt's HTTP status, is written to files for debugging:
+#   /var/log/cloudtargets-start.log, /var/tmp/cloudtargets-delete.log
+secs=""
+if [ -n "${CT_MAX_HOURS:-}" ]; then
   secs="$(awk -v h="${CT_MAX_HOURS}" 'BEGIN { printf "%d", h * 3600 }')"
-  nohup sh -c "sleep ${secs}; curl -s -X DELETE -H \"Authorization: Bearer ${RUNPOD_API_KEY}\" https://rest.runpod.io/v1/pods/${RUNPOD_POD_ID}" >/dev/null 2>&1 &
+fi
+log=/var/log/cloudtargets-start.log
+{
+  echo "started: $(date -u +%FT%TZ)  CT_MAX_HOURS=${CT_MAX_HOURS:-unset}  limit_seconds=${secs:-none}"
+  echo "RUNPOD_POD_ID: $([ -n "${RUNPOD_POD_ID:-}" ] && echo set || echo MISSING)  RUNPOD_API_KEY: $([ -n "${RUNPOD_API_KEY:-}" ] && echo set || echo MISSING)  curl: $(command -v curl || echo MISSING)"
+} | ${sudo_cmd} tee "${log}" >/dev/null
+if [ -n "${secs}" ] && [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" ]; then
+  # The key stays in the environment and reaches curl through stdin; it must not appear on any command line, where `ps` shows it.
+  nohup sh -c '
+    sleep "$1"
+    n=0
+    while [ "$n" -lt 120 ]; do
+      code=$(printf "header = \"Authorization: Bearer %s\"\n" "$RUNPOD_API_KEY" | curl -s -m 30 -K - -o /var/tmp/cloudtargets-delete.out -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"query\":\"mutation { podTerminate(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) }\"}" \
+        https://api.runpod.io/graphql)
+      echo "$(date -u +%FT%TZ) attempt $n http $code $(head -c 200 /var/tmp/cloudtargets-delete.out)" >> /var/tmp/cloudtargets-delete.log
+      n=$((n + 1))
+      sleep 60
+    done' sh "${secs}" >/dev/null 2>&1 &
+  echo "time limit: pod terminates itself ${secs} s after this start (GraphQL podTerminate, retried each minute)" | ${sudo_cmd} tee -a "${log}" >/dev/null
+else
+  echo "time limit: NOT scheduled (needs CT_MAX_HOURS, RUNPOD_POD_ID and RUNPOD_API_KEY)" | ${sudo_cmd} tee -a "${log}" >/dev/null
 fi
 
 exec ${sudo_cmd} /usr/sbin/sshd -D -e
