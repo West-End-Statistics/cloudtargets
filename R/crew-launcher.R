@@ -121,8 +121,10 @@ ct_launcher_class <- R6::R6Class(
 #' Changing `workers` changes how many machines are used.
 #'
 #' Pass `sync: none` in the configuration to skip copying the project, if the
-#' machines' image already contains it. Each machine also deletes itself after
-#' `max_hours` as a backstop.
+#' machines' image already contains it. If the R session is killed (Ctrl-C can do
+#' that to `tar_make()`), a separate watchdog process deletes the machines within
+#' seconds; machines also delete themselves after `orphan_minutes` (30) without a
+#' connection, and after `max_hours` as a last backstop.
 #'
 #' @param workers Maximum number of workers (one worker slot per vCPU).
 #' @param config Configuration from [ct_config()].

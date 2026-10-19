@@ -19,6 +19,11 @@
 ct_pool_path <- function(config) file.path(config$state_dir, "pool.json")
 
 ct_pool_new <- function(config, provider, hooks = ct_pool_hooks(), n_slots) {
+  # Pool machines delete themselves when nothing has been connected to them for
+  # a while (a single large machine must not: its run goes on while you are away).
+  if (is.null(config$orphan_minutes) || is.na(config$orphan_minutes)) {
+    config$orphan_minutes <- 30
+  }
   pool <- new.env(parent = emptyenv())
   pool$config <- config
   pool$provider <- provider
@@ -55,7 +60,8 @@ ct_pool_hooks <- function() {
   c(ct_hooks(), list(
     check_start = ct_ssh_check_start,
     prepare_start = ct_prepare_start,
-    tunnel_start = ct_tunnel_start
+    tunnel_start = ct_tunnel_start,
+    watchdog = ct_watchdog_start
   ))
 }
 
@@ -73,6 +79,7 @@ ct_pool_hooks_normalize <- function(hooks) {
   if (is.null(hooks$tunnel_start) && !is.null(hooks$tunnel)) {
     hooks$tunnel_start <- function(state, config, port) ct_job_now(function() hooks$tunnel(state, config, port))
   }
+  hooks$watchdog <- hooks$watchdog %||% function(config) NULL
   hooks$now <- hooks$now %||% ct_now
   hooks$sleep <- hooks$sleep %||% Sys.sleep
   hooks
@@ -135,6 +142,9 @@ ct_pool_cost_per_hr <- function(pool) {
 #' @keywords internal
 ct_pool_begin <- function(pool, port) {
   pool$port <- port
+  if (isTRUE(pool$config$watchdog %||% TRUE)) {
+    pool$watchdog <- pool$hooks$watchdog(pool$config)
+  }
   pool$t0 <- ct_pn(pool)
   pool$candidates <- pool$provider$candidates(pool$config)
   sizes <- vapply(pool$candidates, function(c) as.numeric(c$spec$vcpus %||% 0L), numeric(1))
@@ -682,6 +692,7 @@ ct_pool_stop <- function(pool, quiet = FALSE) {
     pool$pending <- list()
     pool$to_delete <- character()
     pool$stopped <- TRUE
+    if (!is.null(pool$watchdog)) try(pool$watchdog$kill(), silent = TRUE)
     if (!quiet && length(ids)) {
       cli::cli_alert_success("Deleted {length(ids)} pool machine{?s}; about {ct_format_usd(cost)} used. Nothing is running.")
     }

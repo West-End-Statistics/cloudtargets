@@ -24,7 +24,11 @@ and \code{prepare_timeout} (900 s) how long to set it up and connect it, before 
 deleted and replaced; \code{pool_spread} (TRUE) puts machines of the same size in different data centers
 where it can, so one bad data center cannot stall the pool; \code{pool_give_up_minutes} (60) is how long a pool may go without any
 machine being ready before the run stops. \code{max_hours} (default 12) makes each machine delete itself
-after that long, even if this session dies; see \code{inst/pod-start.sh}. \code{sync: none} skips copying the project to pool machines.
+after that long, even if this session dies; see \code{inst/pod-start.sh}. In a pool, two further safeguards delete
+machines left behind by an interrupted run: a \code{watchdog} (default \code{true}) is a separate background process that deletes
+the pool's machines as soon as the R session that created them has ended, however it ended; and \code{orphan_minutes}
+(default 30 in a pool, 0 = off; a single large machine never uses it) makes each machine delete itself after that many minutes with
+no SSH connection to it, which covers a controller whose whole computer went away. \code{sync: none} skips copying the project to pool machines.
 \code{ssh_setup: runtime} (default) installs sshd, rsync and
 tmux when the machine starts; use \code{image} for images that already run sshd.
 }

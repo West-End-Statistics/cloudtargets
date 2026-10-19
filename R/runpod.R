@@ -169,7 +169,10 @@ rp_create <- function(candidate, config, name) {
     containerDiskInGb = as.integer(config$container_disk_gb),
     volumeInGb = 0L,
     ports = list("22/tcp"),
-    env = list(PUBLIC_KEY = pub, SSH_USER = config$ssh_user, CT_MAX_HOURS = as.character(config$max_hours))
+    env = list(
+      PUBLIC_KEY = pub, SSH_USER = config$ssh_user, CT_MAX_HOURS = as.character(config$max_hours),
+      CT_ORPHAN_MINUTES = as.character(if (is.null(config$orphan_minutes) || is.na(config$orphan_minutes)) 0 else config$orphan_minutes)
+    )
   )
   if (identical(config$ssh_setup, "runtime")) {
     start <- paste(readLines(system.file("pod-start.sh", package = "cloudtargets")), collapse = "\n")

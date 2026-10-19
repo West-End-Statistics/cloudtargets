@@ -66,6 +66,8 @@ shared storage is required. When \code{tar_make()} ends the machines are deleted
 Changing \code{workers} changes how many machines are used.
 
 Pass \code{sync: none} in the configuration to skip copying the project, if the
-machines' image already contains it. Each machine also deletes itself after
-\code{max_hours} as a backstop.
+machines' image already contains it. If the R session is killed (Ctrl-C can do
+that to \code{tar_make()}), a separate watchdog process deletes the machines within
+seconds; machines also delete themselves after \code{orphan_minutes} (30) without a
+connection, and after \code{max_hours} as a last backstop.
 }

@@ -21,6 +21,8 @@ ct_default_config <- function() {
     ready_timeout = 900,
     prepare_timeout = 900,
     max_hours = 12,
+    watchdog = TRUE,
+    orphan_minutes = NA_real_,
     pool_give_up_minutes = 60,
     pool_spread = TRUE,
     pool_prepare_parallel = 4L,
@@ -61,7 +63,11 @@ ct_default_config <- function() {
 #' deleted and replaced; `pool_spread` (TRUE) puts machines of the same size in different data centers
 #' where it can, so one bad data center cannot stall the pool; `pool_give_up_minutes` (60) is how long a pool may go without any
 #' machine being ready before the run stops. `max_hours` (default 12) makes each machine delete itself
-#' after that long, even if this session dies; see `inst/pod-start.sh`. `sync: none` skips copying the project to pool machines.
+#' after that long, even if this session dies; see `inst/pod-start.sh`. In a pool, two further safeguards delete
+#' machines left behind by an interrupted run: a `watchdog` (default `true`) is a separate background process that deletes
+#' the pool's machines as soon as the R session that created them has ended, however it ended; and `orphan_minutes`
+#' (default 30 in a pool, 0 = off; a single large machine never uses it) makes each machine delete itself after that many minutes with
+#' no SSH connection to it, which covers a controller whose whole computer went away. `sync: none` skips copying the project to pool machines.
 #' `ssh_setup: runtime` (default) installs sshd, rsync and
 #' tmux when the machine starts; use `image` for images that already run sshd.
 #'
@@ -115,6 +121,10 @@ ct_validate_config <- function(config) {
   }
   if (!is.numeric(config$max_hours) || config$max_hours <= 0) {
     cli::cli_abort("{.field max_hours} must be a positive number of hours.")
+  }
+  orphan <- config$orphan_minutes
+  if (!is.null(orphan) && !(is.numeric(orphan) && length(orphan) == 1L && (is.na(orphan) || orphan >= 0))) {
+    cli::cli_abort("{.field orphan_minutes} must be a single number of minutes (0 turns it off).")
   }
   positive <- c(
     "ready_timeout", "prepare_timeout", "pool_give_up_minutes", "pool_prepare_parallel",

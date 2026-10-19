@@ -32,7 +32,9 @@ export -p \
 # The pool runs every worker of a machine over one multiplexed SSH connection, and sshd
 # allows only 10 sessions per connection by default. Lift that, and tolerate the burst of
 # connections when many workers start at once.
-printf 'MaxSessions 512\nMaxStartups 100:30:300\n' | ${sudo_cmd} tee /etc/ssh/sshd_config.d/10-cloudtargets.conf >/dev/null
+# ClientAlive* makes sshd notice a controller that vanished without closing its connections
+# (power loss, dropped network), which the idle check below relies on.
+printf 'MaxSessions 512\nMaxStartups 100:30:300\nClientAliveInterval 30\nClientAliveCountMax 4\n' | ${sudo_cmd} tee /etc/ssh/sshd_config.d/10-cloudtargets.conf >/dev/null
 
 # Time limit (CT_MAX_HOURS): the machine must not outlive its controller. After the limit the
 # pod terminates ITSELF through RunPod's GraphQL API, using the key RunPod injects into every pod
@@ -50,23 +52,47 @@ log=/var/log/cloudtargets-start.log
   echo "started: $(date -u +%FT%TZ)  CT_MAX_HOURS=${CT_MAX_HOURS:-unset}  limit_seconds=${secs:-none}"
   echo "RUNPOD_POD_ID: $([ -n "${RUNPOD_POD_ID:-}" ] && echo set || echo MISSING)  RUNPOD_API_KEY: $([ -n "${RUNPOD_API_KEY:-}" ] && echo set || echo MISSING)  curl: $(command -v curl || echo MISSING)"
 } | ${sudo_cmd} tee "${log}" >/dev/null
-if [ -n "${secs}" ] && [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" ]; then
-  # The key stays in the environment and reaches curl through stdin; it must not appear on any command line, where `ps` shows it.
-  nohup sh -c '
-    sleep "$1"
-    n=0
-    while [ "$n" -lt 120 ]; do
-      code=$(printf "header = \"Authorization: Bearer %s\"\n" "$RUNPOD_API_KEY" | curl -s -m 30 -K - -o /var/tmp/cloudtargets-delete.out -w "%{http_code}" -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"query\":\"mutation { podTerminate(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) }\"}" \
-        https://api.runpod.io/graphql)
-      echo "$(date -u +%FT%TZ) attempt $n http $code $(head -c 200 /var/tmp/cloudtargets-delete.out)" >> /var/tmp/cloudtargets-delete.log
-      n=$((n + 1))
-      sleep 60
-    done' sh "${secs}" >/dev/null 2>&1 &
-  echo "time limit: pod terminates itself ${secs} s after this start (GraphQL podTerminate, retried each minute)" | ${sudo_cmd} tee -a "${log}" >/dev/null
+# One helper deletes the pod, retrying every minute; the time limit and the idle check both use it.
+# The key stays in the environment and reaches curl through stdin; it must not appear on any command line, where `ps` shows it.
+cat > /var/tmp/ct-terminate.sh <<'EOS'
+n=0
+while [ "$n" -lt 120 ]; do
+  code=$(printf "header = \"Authorization: Bearer %s\"\n" "$RUNPOD_API_KEY" | curl -s -m 30 -K - -o /var/tmp/cloudtargets-delete.out -w "%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"query\":\"mutation { podTerminate(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) }\"}" \
+    https://api.runpod.io/graphql)
+  echo "$(date -u +%FT%TZ) attempt $n http $code $(head -c 200 /var/tmp/cloudtargets-delete.out)" >> /var/tmp/cloudtargets-delete.log
+  n=$((n + 1))
+  sleep 60
+done
+EOS
+if [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" ]; then
+  if [ -n "${secs}" ]; then
+    nohup sh -c 'sleep "$1"; echo "$(date -u +%FT%TZ) time limit reached" >> /var/tmp/cloudtargets-delete.log; exec sh /var/tmp/ct-terminate.sh' sh "${secs}" >/dev/null 2>&1 &
+    echo "time limit: pod terminates itself ${secs} s after this start (GraphQL podTerminate, retried each minute)" | ${sudo_cmd} tee -a "${log}" >/dev/null
+  else
+    echo "time limit: NOT scheduled (CT_MAX_HOURS missing)" | ${sudo_cmd} tee -a "${log}" >/dev/null
+  fi
+  # Idle check (CT_ORPHAN_MINUTES, pool machines only): if no SSH connection to this machine has
+  # existed for that long, the controller is gone, so terminate. Counts established connections
+  # to port 22 from /proc, which needs no extra tools.
+  orphan_secs="$(awk -v m="${CT_ORPHAN_MINUTES:-0}" 'BEGIN { printf "%d", m * 60 }')"
+  if [ "${orphan_secs}" -gt 0 ]; then
+    nohup sh -c '
+      idle=0
+      while :; do
+        sleep 30
+        n=$(awk "NR > 1 && \$4 == \"01\" && \$2 ~ /:0016\$/" /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)
+        if [ "$n" -gt 0 ]; then idle=0; else idle=$((idle + 30)); fi
+        if [ "$idle" -ge "$1" ]; then
+          echo "$(date -u +%FT%TZ) no SSH connection for ${idle} s; terminating" >> /var/tmp/cloudtargets-delete.log
+          exec sh /var/tmp/ct-terminate.sh
+        fi
+      done' sh "${orphan_secs}" >/dev/null 2>&1 &
+    echo "idle check: pod terminates itself after ${orphan_secs} s without any SSH connection" | ${sudo_cmd} tee -a "${log}" >/dev/null
+  fi
 else
-  echo "time limit: NOT scheduled (needs CT_MAX_HOURS, RUNPOD_POD_ID and RUNPOD_API_KEY)" | ${sudo_cmd} tee -a "${log}" >/dev/null
+  echo "self-termination: NOT scheduled (needs RUNPOD_POD_ID and RUNPOD_API_KEY)" | ${sudo_cmd} tee -a "${log}" >/dev/null
 fi
 
 exec ${sudo_cmd} /usr/sbin/sshd -D -e
