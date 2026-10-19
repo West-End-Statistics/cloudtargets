@@ -124,3 +124,23 @@ test_that("the runner script exports env, runs the command and records the exit 
   expect_equal(readLines(file.path(dir, ".cloudtargets-run.log")), "v=32")
   expect_equal(readLines(file.path(dir, ".cloudtargets-exit")), "0")
 })
+
+test_that("ct_poll runs tar_poll in the remote project directory over a tty", {
+  config <- test_config()
+  config$remote_dir <- "/work/my proj"
+  state <- list(id = "abc", host = "1.2.3.4", port = 2222L, user = "dev")
+  args <- ct_poll_args(state, config, interval = 2, timeout = 30)
+  expect_true("-t" %in% args)
+  expect_true("dev@1.2.3.4" %in% args)
+  expect_equal(args[match("-p", args) + 1L], "2222")
+  remote <- args[length(args)]
+  # The remote shell sees `bash -c '<command>'`; let bash unquote it and check the command itself.
+  script <- withr::local_tempfile(fileext = ".sh")
+  writeLines(c(paste("set --", remote), "printf %s \"$3\""), script)
+  inner <- system2("bash", script, stdout = TRUE)
+  expect_match(remote, "^bash -c ")
+  expect_match(inner, "cd '/work/my proj' && Rscript -e", fixed = TRUE)
+  expect_match(inner, "targets::tar_poll(interval = 2, timeout = 30)", fixed = TRUE)
+  expect_true(startsWith(inner, "[ -f /etc/profile.d/zz-container-env.sh ]"))
+  expect_match(ct_poll_args(state, config)[length(ct_poll_args(state, config))], "timeout = Inf", fixed = TRUE)
+})

@@ -288,6 +288,41 @@ ct_parse_progress <- function(text) {
   )
 }
 
+# ssh arguments that run targets::tar_poll() inside the remote project directory.
+ct_poll_args <- function(state, config, interval = 5, timeout = Inf) {
+  r_code <- sprintf("targets::tar_poll(interval = %s, timeout = %s)", format(interval), format(timeout))
+  command <- paste0(
+    "[ -f /etc/profile.d/zz-container-env.sh ] && . /etc/profile.d/zz-container-env.sh; ",
+    "cd ", ct_shell_quote(ct_remote_dir(config)), " && Rscript -e ", ct_shell_quote(r_code)
+  )
+  c(
+    ct_ssh_options(config), "-t", "-p", as.character(state$port),
+    paste0(state$user, "@", state$host), sprintf("bash -c %s", ct_shell_quote(command))
+  )
+}
+
+#' Watch a run with targets' own poller
+#'
+#' Runs `targets::tar_poll()` on the machine over SSH and streams its live
+#' table (skipped / dispatched / completed / errored / canceled) to this
+#' console. This is the single-machine equivalent of calling `tar_poll()`
+#' locally, which is not possible because the store lives on the machine.
+#' (With [ct_crew_controller()] the store is local, so plain `tar_poll()` works.)
+#' Interrupting only stops watching; the run keeps going.
+#'
+#' @inheritParams ct_provision
+#' @param interval Seconds between updates.
+#' @param timeout Seconds to watch; `Inf` (default) until interrupted or the run ends.
+#' @param state Machine to watch; defaults to the one recorded by [ct_provision()].
+#' @return Invisibly, the exit status of the remote command.
+#' @export
+ct_poll <- function(config = ct_config(), interval = 5, timeout = Inf,
+                    state = ct_require_state(config)) {
+  # system2() pastes its arguments into a shell line, so quote each one.
+  status <- system2("ssh", shQuote(ct_poll_args(state, config, interval, timeout)))
+  invisible(status)
+}
+
 #' Watch a run until it finishes
 #'
 #' Prints one status line per poll: elapsed time, cost so far, and target
