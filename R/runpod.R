@@ -70,9 +70,23 @@ rp_http <- function(method, path, body = NULL) {
 }
 
 rp_error_text <- function(res) {
-  msg <- if (is.list(res$body) && !is.null(res$body$error)) res$body$error else res$body
-  msg <- if (is.character(msg)) msg else "no error message"
-  substr(gsub("\\s+", " ", paste(msg, collapse = " ")), 1L, 200L)
+  body <- res$body
+  # RunPod wraps validation errors in a one-element JSON array.
+  if (is.list(body) && is.null(names(body)) && length(body) == 1L) {
+    body <- body[[1L]]
+  }
+  msg <- if (is.list(body)) {
+    problems <- unlist(body$problems)
+    paste(c(body$error, body$message, body$detail, problems), collapse = " ")
+  } else if (is.character(body)) {
+    body
+  } else {
+    ""
+  }
+  if (!nzchar(trimws(msg))) {
+    msg <- "no error message"
+  }
+  substr(gsub("\\s+", " ", msg), 1L, 400L)
 }
 
 rp_check <- function(res, what) {
@@ -165,6 +179,14 @@ rp_create <- function(candidate, config, name) {
   res <- rp_http("POST", "/pods", body)
   if (res$status >= 400L && grepl("no longer any instances available", rp_error_text(res), fixed = TRUE)) {
     ct_abort_capacity(paste("no capacity for", candidate$label))
+  }
+  if (res$status == 400L && grepl("dataCenterIds", rp_error_text(res), fixed = TRUE)) {
+    site <- candidate$spec$data_center
+    cli::cli_abort(c(
+      "RunPod does not accept the data center {.val {site}} when creating pods.",
+      i = "Some data centers shown in RunPod's catalog cannot be requested through the pod-creation API.",
+      i = "Remove {.val {site}} from {.field runpod.data_centers}. RunPod's message: {rp_error_text(res)}"
+    ), call = NULL)
   }
   rp_check(res, paste("create a pod for", candidate$label))
   list(

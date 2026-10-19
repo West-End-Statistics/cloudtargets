@@ -156,3 +156,27 @@ test_that("the public key falls back to the ssh-agent when the file is missing",
   expect_null(ct_public_key(config))
   expect_error(rp_create(list(label = "L", spec = list(flavor = "cpu3c", vcpus = 2L, data_center = "A")), config, "x"), "No SSH public key")
 })
+
+test_that("RunPod's array-wrapped validation errors are shown, not 'no error message'", {
+  body <- list(list(error = "request body does not meet the schema",
+                    problems = list("At /pods/properties/dataCenterIds/items/enum: value must be one of 'EU-RO-1', 'US-GA-2'")))
+  txt <- rp_error_text(list(status = 400L, body = body))
+  expect_match(txt, "schema", fixed = TRUE)
+  expect_match(txt, "must be one of 'EU-RO-1'", fixed = TRUE)
+  expect_equal(rp_error_text(list(status = 500L, body = NULL)), "no error message")
+  expect_equal(rp_error_text(list(status = 500L, body = list(error = "boom"))), "boom")
+})
+
+test_that("a data center the create API rejects is a clear configuration error", {
+  config <- test_config()
+  pub <- withr::local_tempfile(fileext = ".pub")
+  writeLines("ssh-ed25519 AAAA test", pub)
+  config$ssh_public_key <- pub
+  local_mocked_bindings(rp_http = function(...) {
+    list(status = 400L, body = list(list(error = "schema", problems = list("At /pods/properties/dataCenterIds/items/enum: value must be one of 'EU-RO-1'"))))
+  })
+  cand <- list(label = "cpu3m x 32 vCPU in US-NE-1", spec = list(flavor = "cpu3m", vcpus = 32L, data_center = "US-NE-1"))
+  err <- expect_error(rp_create(cand, config, "x"), "does not accept the data center")
+  expect_false(inherits(err, "ct_error_capacity"))
+  expect_match(conditionMessage(err), "runpod.data_centers", fixed = TRUE)
+})
