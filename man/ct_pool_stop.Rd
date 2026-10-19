@@ -15,8 +15,8 @@ ct_pool_stop(pool, quiet = FALSE)
 Invisibly, the deleted ids.
 }
 \description{
-Kills the tunnels and worker processes, deletes all machines created for the
-pool (including ones still starting), and removes the pool records.
-Idempotent.
+Kills the background jobs, tunnels and worker processes, deletes all machines
+created for the pool (including ones still starting or waiting to be
+deleted), and removes the pool records. Idempotent.
 }
 \keyword{internal}

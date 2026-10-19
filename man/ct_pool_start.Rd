@@ -2,12 +2,12 @@
 % Please edit documentation in R/pool.R
 \name{ct_pool_start}
 \alias{ct_pool_start}
-\title{Start a pool of machines}
+\title{Start a pool and wait until it is complete}
 \usage{
 ct_pool_start(pool, port)
 }
 \arguments{
-\item{pool}{A pool from \code{\link[=ct_pool_new]{ct_pool_new()}}.}
+\item{pool}{A pool, from \code{ct_pool_new()}.}
 
 \item{port}{Local TCP port of the controller's dispatcher.}
 }
@@ -15,11 +15,9 @@ ct_pool_start(pool, port)
 The pool, invisibly.
 }
 \description{
-Creates machines until their combined worker slots cover \code{n_slots}, using
-the provider's candidate ladder for each (the last machine is sized to what
-is still needed). Machines start in parallel; any that never become
-reachable are deleted and replaced. Each ready machine is prepared
-(packages, code) and connected to this session by a reverse tunnel to
-\code{port}. If the pool cannot be completed everything created is deleted.
+Blocking wrapper around \code{\link[=ct_pool_begin]{ct_pool_begin()}} and \code{\link[=ct_pool_tick]{ct_pool_tick()}} for callers
+that need the whole pool before doing anything. It fails fast (and deletes
+everything created) if the candidate ladder runs out or a machine cannot be
+prepared.
 }
 \keyword{internal}

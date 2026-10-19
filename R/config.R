@@ -18,8 +18,19 @@ ct_default_config <- function() {
     sync = "rsync",
     dockerfile = NULL,
     dockerfile_target = NULL,
-    ready_timeout = 600,
+    ready_timeout = 900,
+    prepare_timeout = 900,
     max_hours = 12,
+    pool_give_up_minutes = 60,
+    pool_spread = TRUE,
+    pool_prepare_parallel = 4L,
+    pool_prepare_failures_max = 3L,
+    pool_describe_interval = 10,
+    pool_backoff_min = 30,
+    pool_backoff_max = 120,
+    pool_site_cooldown_minutes = 60,
+    pool_status_interval = 60,
+    pool_tunnel_reconnects_max = 3L,
     state_dir = ".cloudtargets",
     remote_dir = NULL,
     command = "Rscript -e 'targets::tar_make()'",
@@ -45,7 +56,11 @@ ct_default_config <- function() {
 #' Lists in the file replace the default list; scalar fields override. If
 #' `dockerfile` (and optionally `dockerfile_target`) is set, the base image,
 #' login user and `install2.r` packages are read from it; see
-#' [ct_dockerfile_info()]. `max_hours` (default 12) makes each machine delete itself
+#' [ct_dockerfile_info()]. `ready_timeout` (default 900 s) is how long a machine may take to start answering SSH,
+#' and `prepare_timeout` (900 s) how long to set it up and connect it, before it is
+#' deleted and replaced; `pool_spread` (TRUE) puts machines of the same size in different data centers
+#' where it can, so one bad data center cannot stall the pool; `pool_give_up_minutes` (60) is how long a pool may go without any
+#' machine being ready before the run stops. `max_hours` (default 12) makes each machine delete itself
 #' after that long, even if this session dies; see `inst/pod-start.sh`. `sync: none` skips copying the project to pool machines.
 #' `ssh_setup: runtime` (default) installs sshd, rsync and
 #' tmux when the machine starts; use `image` for images that already run sshd.
@@ -101,8 +116,16 @@ ct_validate_config <- function(config) {
   if (!is.numeric(config$max_hours) || config$max_hours <= 0) {
     cli::cli_abort("{.field max_hours} must be a positive number of hours.")
   }
-  if (!is.numeric(config$ready_timeout) || config$ready_timeout <= 0) {
-    cli::cli_abort("{.field ready_timeout} must be a positive number of seconds.")
+  positive <- c(
+    "ready_timeout", "prepare_timeout", "pool_give_up_minutes", "pool_prepare_parallel",
+    "pool_prepare_failures_max", "pool_describe_interval", "pool_backoff_min", "pool_backoff_max",
+    "pool_site_cooldown_minutes", "pool_status_interval", "pool_tunnel_reconnects_max"
+  )
+  for (key in positive) {
+    value <- config[[key]]
+    if (!is.numeric(value) || length(value) != 1L || is.na(value) || value <= 0) {
+      cli::cli_abort("{.field {key}} must be a single positive number.")
+    }
   }
   invisible(config)
 }

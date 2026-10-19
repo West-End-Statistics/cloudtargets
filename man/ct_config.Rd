@@ -19,7 +19,11 @@ key paths.
 Lists in the file replace the default list; scalar fields override. If
 \code{dockerfile} (and optionally \code{dockerfile_target}) is set, the base image,
 login user and \code{install2.r} packages are read from it; see
-\code{\link[=ct_dockerfile_info]{ct_dockerfile_info()}}. \code{max_hours} (default 12) makes each machine delete itself
+\code{\link[=ct_dockerfile_info]{ct_dockerfile_info()}}. \code{ready_timeout} (default 900 s) is how long a machine may take to start answering SSH,
+and \code{prepare_timeout} (900 s) how long to set it up and connect it, before it is
+deleted and replaced; \code{pool_spread} (TRUE) puts machines of the same size in different data centers
+where it can, so one bad data center cannot stall the pool; \code{pool_give_up_minutes} (60) is how long a pool may go without any
+machine being ready before the run stops. \code{max_hours} (default 12) makes each machine delete itself
 after that long, even if this session dies; see \code{inst/pod-start.sh}. \code{sync: none} skips copying the project to pool machines.
 \code{ssh_setup: runtime} (default) installs sshd, rsync and
 tmux when the machine starts; use \code{image} for images that already run sshd.

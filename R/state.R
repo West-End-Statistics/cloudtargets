@@ -46,3 +46,7 @@ ct_format_usd <- function(x) {
 ct_pod_name <- function(config) {
   paste0(config$name_prefix, "-", paste(sample(c(0:9, letters[1:6]), 6L, replace = TRUE), collapse = ""))
 }
+
+# The clock. All time-dependent code takes a `now` function (default this one)
+# so tests can substitute a fake clock.
+ct_now <- function() Sys.time()

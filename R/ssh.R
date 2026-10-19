@@ -29,11 +29,22 @@ ct_ssh_target <- function(state, config) {
 #' @keywords internal
 ct_ssh_check <- function(host, port, user, config = NULL) {
   res <- processx::run(
-    "ssh",
-    c(ct_ssh_options(config), "-p", as.character(port), paste0(user, "@", host), "true"),
+    "ssh", ct_ssh_check_args(host, port, user, config),
     error_on_status = FALSE, timeout = 20
   )
   identical(res$status, 0L)
+}
+
+ct_ssh_check_args <- function(host, port, user, config = NULL) {
+  c(ct_ssh_options(config), "-p", as.character(port), paste0(user, "@", host), "true")
+}
+
+# Non-blocking twin of ct_ssh_check(): a job that is "ok" once SSH answers.
+ct_ssh_check_start <- function(host, port, user, config = NULL, now = ct_now) {
+  proc <- processx::process$new(
+    "ssh", ct_ssh_check_args(host, port, user, config), stdout = NULL, stderr = NULL
+  )
+  ct_job_process(proc, timeout = 25, now = now)
 }
 
 ct_hooks <- function() {

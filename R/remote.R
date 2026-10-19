@@ -22,13 +22,34 @@ ct_ssh_prefix <- function(state, config) {
 # Run a shell command on the machine. The command is base64-wrapped so no
 # quoting from the caller can break the remote shell.
 ct_ssh_run <- function(state, config, command, echo = FALSE, timeout = 600) {
+  processx::run(
+    "ssh", ct_ssh_run_args(state, config, command),
+    error_on_status = FALSE, echo = echo, timeout = timeout
+  )
+}
+
+ct_ssh_run_args <- function(state, config, command) {
   # Pick up the container's PATH/R settings, which sshd's minimal environment drops.
   command <- paste("[ -f /etc/profile.d/zz-container-env.sh ] && . /etc/profile.d/zz-container-env.sh", command, sep = "\n")
   wrapped <- sprintf("echo %s | base64 -d | bash -eo pipefail", ct_b64(command))
-  processx::run(
-    "ssh", c(ct_ssh_prefix(state, config), wrapped),
-    error_on_status = FALSE, echo = echo, timeout = timeout
+  c(ct_ssh_prefix(state, config), wrapped)
+}
+
+# Non-blocking twin of ct_ssh_run(): a job for a remote command. Output goes to
+# `log` (an unread pipe would deadlock the child once it fills).
+ct_ssh_start <- function(state, config, command, log = NULL, timeout = Inf, now = ct_now) {
+  proc <- processx::process$new(
+    "ssh", ct_ssh_run_args(state, config, command),
+    stdout = log, stderr = if (is.null(log)) NULL else "2>&1"
   )
+  ct_job_process(proc, timeout = timeout, now = now, log = log)
+}
+
+# Where a step's output goes: <state_dir>/logs/<machine id>-<step>.log
+ct_log_path <- function(config, state, step) {
+  dir <- file.path(config$state_dir, "logs")
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  file.path(dir, paste0(state$id, "-", step, ".log"))
 }
 
 ct_b64 <- function(text) {
@@ -77,13 +98,8 @@ ct_r_packages <- function(config = ct_config(), dir = ".") {
 #' @export
 ct_bootstrap <- function(config = ct_config(), packages = ct_r_packages(config),
                          state = ct_require_state(config)) {
-  script <- paste(readLines(system.file("bootstrap-r.sh", package = "cloudtargets")), collapse = "\n")
   cli::cli_alert_info("Installing R and {length(packages)} package{?s} on {state$host}")
-  command <- sprintf(
-    "cat > /tmp/bootstrap-r.sh <<'CT_EOF'\n%s\nCT_EOF\nbash /tmp/bootstrap-r.sh %s",
-    script, paste(vapply(packages, ct_shell_quote, ""), collapse = " ")
-  )
-  res <- ct_ssh_run(state, config, command, echo = TRUE, timeout = 3600)
+  res <- ct_ssh_run(state, config, ct_bootstrap_command(packages), echo = TRUE, timeout = 3600)
   if (!identical(res$status, 0L)) {
     cli::cli_abort(c(
       "Bootstrap failed (exit {res$status}).",
@@ -93,17 +109,78 @@ ct_bootstrap <- function(config = ct_config(), packages = ct_r_packages(config),
   invisible(TRUE)
 }
 
+ct_bootstrap_command <- function(packages) {
+  script <- paste(readLines(system.file("bootstrap-r.sh", package = "cloudtargets")), collapse = "\n")
+  sprintf(
+    "cat > /tmp/bootstrap-r.sh <<'CT_EOF'\n%s\nCT_EOF\nbash /tmp/bootstrap-r.sh %s",
+    script, paste(vapply(packages, ct_shell_quote, ""), collapse = " ")
+  )
+}
+
+# Non-blocking twin of ct_bootstrap(): a job for the machine's package setup.
+ct_bootstrap_start <- function(config, state, packages = ct_r_packages(config), now = ct_now) {
+  ct_ssh_start(state, config, ct_bootstrap_command(packages),
+    log = ct_log_path(config, state, "bootstrap"), now = now
+  )
+}
+
 ct_rsync <- function(state, config, from, to, excludes = character(), delete = FALSE) {
   if (!nzchar(Sys.which("rsync"))) {
     cli::cli_abort("{.code rsync} is required locally but was not found on PATH.")
   }
-  ssh <- paste(c("ssh", ct_ssh_options(config), "-p", state$port), collapse = " ")
-  args <- c("-az", if (delete) "--delete", unlist(lapply(excludes, function(e) c("--exclude", e))), "-e", ssh, from, to)
-  res <- processx::run("rsync", args, error_on_status = FALSE, timeout = 3600)
+  res <- processx::run("rsync", ct_rsync_args(state, config, from, to, excludes, delete),
+    error_on_status = FALSE, timeout = 3600
+  )
   if (!identical(res$status, 0L)) {
     cli::cli_abort(c("rsync failed (exit {res$status}).", x = trimws(res$stderr)))
   }
   invisible(TRUE)
+}
+
+ct_rsync_args <- function(state, config, from, to, excludes = character(), delete = FALSE) {
+  ssh <- paste(c("ssh", ct_ssh_options(config), "-p", state$port), collapse = " ")
+  c("-az", if (delete) "--delete", unlist(lapply(excludes, function(e) c("--exclude", e))), "-e", ssh, from, to)
+}
+
+ct_sync_mkdir_command <- function(config) {
+  q <- ct_shell_quote(ct_remote_dir(config))
+  sprintf("mkdir -p %s 2>/dev/null || { sudo -n mkdir -p %s && sudo -n chown \"$(id -u):$(id -g)\" %s; }", q, q, q)
+}
+
+# The arguments that copy the project to the machine (see ct_sync()).
+ct_sync_rsync_args <- function(config, state) {
+  ct_rsync_args(
+    state, config,
+    from = paste0(ct_local_dir(), "/"),
+    to = sprintf("%s@%s:%s/", state$user, state$host, ct_remote_dir(config)),
+    excludes = unlist(config$sync_exclude), delete = TRUE
+  )
+}
+
+# Non-blocking twin of ct_sync(): create the directory, then rsync, as one job.
+ct_sync_start <- function(config, state, now = ct_now) {
+  ct_job_chain(list(
+    function() ct_ssh_start(state, config, ct_sync_mkdir_command(config),
+      log = ct_log_path(config, state, "mkdir"), now = now
+    ),
+    function() {
+      if (!nzchar(Sys.which("rsync"))) {
+        stop("rsync is required locally but was not found on PATH.")
+      }
+      log <- ct_log_path(config, state, "rsync")
+      proc <- processx::process$new("rsync", ct_sync_rsync_args(config, state), stdout = log, stderr = "2>&1")
+      ct_job_process(proc, now = now, log = log)
+    }
+  ))
+}
+
+# Everything a new pool machine needs before it can take workers: packages, then the project.
+ct_prepare_start <- function(config, state, now = ct_now) {
+  starters <- list(function() ct_bootstrap_start(config, state, now = now))
+  if (!identical(config$sync, "none")) {
+    starters[[2L]] <- function() ct_sync_start(config, state, now = now)
+  }
+  ct_job_chain(starters)
 }
 
 #' Copy the project to the machine
@@ -119,10 +196,7 @@ ct_rsync <- function(state, config, from, to, excludes = character(), delete = F
 #' @export
 ct_sync <- function(config = ct_config(), state = ct_require_state(config)) {
   remote <- ct_remote_dir(config)
-  q <- ct_shell_quote(remote)
-  res <- ct_ssh_run(state, config, sprintf(
-    "mkdir -p %s 2>/dev/null || { sudo -n mkdir -p %s && sudo -n chown \"$(id -u):$(id -g)\" %s; }", q, q, q
-  ))
+  res <- ct_ssh_run(state, config, ct_sync_mkdir_command(config))
   if (!identical(res$status, 0L)) {
     cli::cli_abort("Could not create {.path {remote}} on the machine: {trimws(res$stderr)}")
   }

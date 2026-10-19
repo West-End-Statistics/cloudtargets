@@ -1,3 +1,6 @@
+#' @importFrom R6 R6Class
+NULL
+
 # A crew launcher whose workers run on a pool of cloud machines. The
 # controller (the R session running tar_make()) stays local; the machines are
 # created when the controller starts and deleted when it terminates.
@@ -47,8 +50,35 @@ ct_launcher_class <- R6::R6Class(
       # Last resort if this R session exits without terminate() being called.
       reg.finalizer(pool, function(p) try(ct_pool_stop(p, quiet = TRUE), silent = TRUE), onexit = TRUE)
       self$pool <- pool
-      ct_pool_start(pool, port)
+      # start() must return quickly and, if it fails, clean up after itself:
+      # targets skips terminate() when start() throws.
+      tryCatch(
+        ct_pool_begin(pool, port),
+        error = function(e) {
+          ct_pool_stop(pool, quiet = TRUE)
+          self$pool <- NULL
+          stop(e)
+        }
+      )
       invisible()
+    },
+    # Called every ~0.5 s from targets' scheduling loop: move machines along
+    # (create, check, prepare, connect, replace) without ever blocking.
+    scale = function(status = NULL, throttle = NULL) {
+      if (!is.null(self$pool)) {
+        ct_pool_tick(self$pool)
+      }
+      super$scale(status = status, throttle = throttle)
+    },
+    # Start only as many workers as there are free slots on READY machines;
+    # crew asks again on its next pass. `workers` stays constant, so the rest
+    # simply start as more machines become ready.
+    launch = function(n = 1L) {
+      n <- if (is.null(self$pool)) 0L else ct_launch_cap(self$pool, n)
+      if (n < 1L) {
+        return(invisible(NULL))
+      }
+      super$launch(n = n)
     },
     launch_worker = function(call) {
       ct_pool_launch(self$pool, call)
@@ -76,10 +106,16 @@ ct_launcher_class <- R6::R6Class(
 #' (targets' default is `"worker"`, which needs a shared file system); this is
 #' checked before any machine is created.
 #'
-#' `tar_make()` runs on your machine as usual. When it starts, machines are
-#' created (as many as `workers` needs, sized by the configured ladder), the
-#' project and its R packages are put on them, and each is joined to your
-#' session by an SSH reverse tunnel, so no inbound port is needed here. Workers
+#' `tar_make()` runs on your machine as usual. Machines are created (as many as
+#' `workers` needs, sized by the configured ladder), the project and its R
+#' packages are put on them, and each is joined to your session by an SSH
+#' reverse tunnel, so no inbound port is needed here. This happens
+#' **incrementally**: work starts on the first machine that is ready while the
+#' others are still starting. A machine that is not ready after `ready_timeout`
+#' (15 minutes by default) is deleted and replaced; a partly filled order keeps
+#' being topped up in the background, and a one-line status is printed at most
+#' once a minute. If no machine has been ready for `pool_give_up_minutes` (60)
+#' everything is deleted and the run stops with an error. Workers
 #' then run targets on them; results return through the controller, so no
 #' shared storage is required. When `tar_make()` ends the machines are deleted.
 #' Changing `workers` changes how many machines are used.

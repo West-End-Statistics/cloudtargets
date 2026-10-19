@@ -51,10 +51,16 @@ The pipeline must set \code{tar_option_set(storage = "main", retrieval = "main")
 (targets' default is \code{"worker"}, which needs a shared file system); this is
 checked before any machine is created.
 
-\code{tar_make()} runs on your machine as usual. When it starts, machines are
-created (as many as \code{workers} needs, sized by the configured ladder), the
-project and its R packages are put on them, and each is joined to your
-session by an SSH reverse tunnel, so no inbound port is needed here. Workers
+\code{tar_make()} runs on your machine as usual. Machines are created (as many as
+\code{workers} needs, sized by the configured ladder), the project and its R
+packages are put on them, and each is joined to your session by an SSH
+reverse tunnel, so no inbound port is needed here. This happens
+\strong{incrementally}: work starts on the first machine that is ready while the
+others are still starting. A machine that is not ready after \code{ready_timeout}
+(15 minutes by default) is deleted and replaced; a partly filled order keeps
+being topped up in the background, and a one-line status is printed at most
+once a minute. If no machine has been ready for \code{pool_give_up_minutes} (60)
+everything is deleted and the run stops with an error. Workers
 then run targets on them; results return through the controller, so no
 shared storage is required. When \code{tar_make()} ends the machines are deleted.
 Changing \code{workers} changes how many machines are used.
