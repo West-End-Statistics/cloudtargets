@@ -90,18 +90,21 @@ rp_check <- function(res, what) {
 
 rp_preflight <- function(config) {
   key <- rp_api_key()
-  pub <- path.expand(config$ssh_public_key)
+  pub <- ct_public_key(config)
+  pub_detail <- if (is.null(pub)) {
+    paste("none: no", config$ssh_public_key, "and no key in ssh-agent")
+  } else if (file.exists(path.expand(config$ssh_public_key))) {
+    config$ssh_public_key
+  } else {
+    "first key from ssh-agent"
+  }
   checks <- list(
     list(ok = !is.null(key), check = "RunPod API key", detail = if (is.null(key)) {
       "not found (set RUNPOD_API_KEY)"
     } else {
       "found"
     }),
-    list(ok = file.exists(pub), check = "SSH public key", detail = if (file.exists(pub)) {
-      pub
-    } else {
-      paste("missing:", pub)
-    }),
+    list(ok = !is.null(pub), check = "SSH public key", detail = pub_detail),
     list(ok = nzchar(Sys.which("ssh")), check = "ssh client", detail = "on PATH")
   )
   if (!is.null(key)) {
@@ -135,7 +138,13 @@ rp_candidates <- function(config) {
 
 rp_create <- function(candidate, config, name) {
   spec <- candidate$spec
-  pub <- trimws(paste(readLines(path.expand(config$ssh_public_key), warn = FALSE), collapse = ""))
+  pub <- ct_public_key(config)
+  if (is.null(pub)) {
+    cli::cli_abort(c(
+      "No SSH public key found.",
+      i = "Create {.file {config$ssh_public_key}} (ssh-keygen) or load a key into your ssh-agent."
+    ))
+  }
   body <- list(
     name = name,
     computeType = "CPU",
@@ -200,6 +209,28 @@ rp_list <- function(prefix) {
   lapply(pods, function(p) {
     list(id = p$id, name = p$name, cost_per_hr = p$costPerHr %||% NA_real_)
   })
+}
+
+# The public key sent to new machines: the configured file, else the first key
+# in the ssh-agent (so a devcontainer with agent forwarding needs no key mounts).
+ct_public_key <- function(config) {
+  path <- path.expand(config$ssh_public_key)
+  if (file.exists(path)) {
+    return(trimws(paste(readLines(path, warn = FALSE), collapse = "")))
+  }
+  keys <- ct_agent_keys()
+  if (length(keys)) keys[[1L]] else NULL
+}
+
+ct_agent_keys <- function() {
+  if (!nzchar(Sys.which("ssh-add"))) {
+    return(character())
+  }
+  out <- suppressWarnings(tryCatch(
+    system2("ssh-add", "-L", stdout = TRUE, stderr = FALSE),
+    error = function(e) character()
+  ))
+  out[grepl("^(ssh-|ecdsa-|sk-)", out)]
 }
 
 `%||%` <- function(x, y) if (is.null(x)) y else x

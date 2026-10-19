@@ -130,3 +130,29 @@ test_that("a missing API key is a clear error", {
   withr::local_envvar(RUNPOD_API_KEY = "", HOME = withr::local_tempdir())
   expect_error(rp_http("GET", "/pods"), "No RunPod API key")
 })
+
+test_that("per-user settings in _cloudtargets.local.yml override the shared file", {
+  dir <- withr::local_tempdir()
+  writeLines(c("max_hours: 3", "ssh_user: dev", "runpod:", "  min_vcpus: 8"), file.path(dir, "_cloudtargets.yml"))
+  writeLines(c("max_hours: 1", "ssh_identity: ~/.ssh/mine", "runpod:", "  vcpus: [16]"), file.path(dir, "_cloudtargets.local.yml"))
+  config <- ct_config(file.path(dir, "_cloudtargets.yml"))
+  expect_equal(config$max_hours, 1)
+  expect_equal(config$ssh_user, "dev")
+  expect_equal(config$ssh_identity, "~/.ssh/mine")
+  expect_equal(config$runpod$min_vcpus, 8L)
+  expect_equal(unlist(config$runpod$vcpus), 16L)
+})
+
+test_that("the public key falls back to the ssh-agent when the file is missing", {
+  config <- test_config()
+  config$ssh_public_key <- file.path(withr::local_tempdir(), "nope.pub")
+  local_mocked_bindings(ct_agent_keys = function() c("ssh-ed25519 AAAAagent1 a", "ssh-rsa AAAAagent2 b"))
+  expect_equal(ct_public_key(config), "ssh-ed25519 AAAAagent1 a")
+  checks <- rp_preflight(config)
+  key_check <- Filter(function(c) c$check == "SSH public key", checks)[[1]]
+  expect_true(key_check$ok)
+  expect_equal(key_check$detail, "first key from ssh-agent")
+  local_mocked_bindings(ct_agent_keys = function() character())
+  expect_null(ct_public_key(config))
+  expect_error(rp_create(list(label = "L", spec = list(flavor = "cpu3c", vcpus = 2L, data_center = "A")), config, "x"), "No SSH public key")
+})

@@ -13,7 +13,9 @@ ct_config(path = "_cloudtargets.yml")
 A named list.
 }
 \description{
-Merges \verb{_cloudtargets.yml} (if present) over \code{\link[=ct_default_config]{ct_default_config()}}.
+Merges \verb{_cloudtargets.yml} (if present) over \code{\link[=ct_default_config]{ct_default_config()}}, then
+\verb{_cloudtargets.local.yml} (if present) over that for per-user settings such as
+key paths.
 Lists in the file replace the default list; scalar fields override. If
 \code{dockerfile} (and optionally \code{dockerfile_target}) is set, the base image,
 login user and \code{install2.r} packages are read from it; see

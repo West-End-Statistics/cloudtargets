@@ -39,7 +39,9 @@ ct_default_config <- function() {
 
 #' Read the cloudtargets configuration
 #'
-#' Merges `_cloudtargets.yml` (if present) over [ct_default_config()].
+#' Merges `_cloudtargets.yml` (if present) over [ct_default_config()], then
+#' `_cloudtargets.local.yml` (if present) over that for per-user settings such as
+#' key paths.
 #' Lists in the file replace the default list; scalar fields override. If
 #' `dockerfile` (and optionally `dockerfile_target`) is set, the base image,
 #' login user and `install2.r` packages are read from it; see
@@ -53,13 +55,18 @@ ct_default_config <- function() {
 #' @export
 ct_config <- function(path = "_cloudtargets.yml") {
   config <- ct_default_config()
-  if (file.exists(path)) {
-    user <- yaml::read_yaml(path)
-    if (!is.list(user)) {
-      cli::cli_abort("{.file {path}} must contain a YAML mapping.")
+  user <- list()
+  # Shared settings, then per-user overrides (keep the latter out of version control).
+  for (file in c(path, sub("\\.yml$", ".local.yml", path))) {
+    if (!file.exists(file)) next
+    part <- yaml::read_yaml(file)
+    if (!is.list(part)) {
+      cli::cli_abort("{.file {file}} must contain a YAML mapping.")
     }
-    config <- ct_merge(config, user)
-    config <- ct_apply_dockerfile(config, user)
+    user <- ct_merge(user, part)
+  }
+  if (length(user)) {
+    config <- ct_apply_dockerfile(ct_merge(config, user), user)
   }
   ct_validate_config(config)
   config
