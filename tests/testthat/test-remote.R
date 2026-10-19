@@ -144,3 +144,12 @@ test_that("ct_poll runs tar_poll in the remote project directory over a tty", {
   expect_true(startsWith(inner, "[ -f /etc/profile.d/zz-container-env.sh ]"))
   expect_match(ct_poll_args(state, config)[length(ct_poll_args(state, config))], "timeout = Inf", fixed = TRUE)
 })
+
+test_that("the pod start script lifts sshd's 10-sessions-per-connection limit before starting sshd", {
+  script <- paste(readLines(system.file("pod-start.sh", package = "cloudtargets")), collapse = "\n")
+  expect_match(script, "MaxSessions 512", fixed = TRUE)
+  expect_match(script, "sshd_config.d/10-cloudtargets.conf", fixed = TRUE)
+  limit_at <- regexpr("MaxSessions 512", script, fixed = TRUE)
+  sshd_at <- regexpr("exec ${sudo_cmd} /usr/sbin/sshd", script, fixed = TRUE)
+  expect_lt(limit_at, sshd_at)
+})

@@ -29,6 +29,11 @@ export -p \
   | sed 's/^declare -x /export /' \
   | ${sudo_cmd} tee /etc/profile.d/zz-container-env.sh >/dev/null
 
+# The pool runs every worker of a machine over one multiplexed SSH connection, and sshd
+# allows only 10 sessions per connection by default. Lift that, and tolerate the burst of
+# connections when many workers start at once.
+printf 'MaxSessions 512\nMaxStartups 100:30:300\n' | ${sudo_cmd} tee /etc/ssh/sshd_config.d/10-cloudtargets.conf >/dev/null
+
 # Time limit: delete this pod after CT_MAX_HOURS even if the controlling session
 # is gone. RunPod injects RUNPOD_POD_ID and an API key into every pod.
 if [ -n "${CT_MAX_HOURS:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" ]; then
